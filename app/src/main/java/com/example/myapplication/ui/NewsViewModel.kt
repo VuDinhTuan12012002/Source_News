@@ -1,6 +1,10 @@
 package com.example.myapplication.ui
 
 import android.app.Application
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import androidx.core.content.getSystemService
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
@@ -10,6 +14,8 @@ import com.example.myapplication.reponsitory.NewsRepository
 import com.example.myapplication.util.Resource
 import kotlinx.coroutines.launch
 import retrofit2.Response
+import java.io.IOException
+import java.util.Locale.IsoCountryCode
 
 class NewsViewModel(app : Application, val newsRepository: NewsRepository ) : AndroidViewModel(app) {
     val headlines : MutableLiveData<Resource<NewsReponse>> = MutableLiveData()
@@ -17,12 +23,23 @@ class NewsViewModel(app : Application, val newsRepository: NewsRepository ) : An
     var headlinePage = 1
     var headlineResponse : NewsReponse? = null
 
-    val search : MutableLiveData<Resource<NewsReponse>> = MutableLiveData()
+    val searchNews : MutableLiveData<Resource<NewsReponse>> = MutableLiveData()
     var searchNewsPage = 1
     var searchNewsResponse : NewsReponse? = null
     var newSearchQuery : String? = null
     var oldSearchQuery : String? = null
 
+    init {
+        getHeadlines("vn")
+    }
+
+    fun getHeadlines(countryCode:String) = viewModelScope.launch {
+        headlinesInternet(countryCode)
+    }
+
+    fun searchNews(searchQuery: String) = viewModelScope.launch {
+        searchNewsInternet(searchQuery)
+    }
     private fun handleHeadlinesResponse(response: Response<NewsReponse>) : Resource<NewsReponse>{
         if(response.isSuccessful){
             response.body()?.let { resultResponse ->
@@ -61,5 +78,59 @@ class NewsViewModel(app : Application, val newsRepository: NewsRepository ) : An
 
     fun addToFavourites(article: Article) = viewModelScope.launch {
         newsRepository.upsert(article)
+    }
+
+    fun getFavourites() = newsRepository.getFavouriteNews()
+
+    fun delete(article: Article) = viewModelScope.launch {
+        newsRepository.deleteArticle(article)
+    }
+
+    fun internetConnection(context: Context) :Boolean {
+        (context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).apply {
+            return getNetworkCapabilities(activeNetwork)?.run {
+                when{
+                    hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> true
+                    hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> true
+                    hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> true
+                    else -> false
+                }
+            } ?: false
+        }
+    }
+
+    private suspend fun headlinesInternet(countryCode: String){
+        headlines.postValue(Resource.Loading())
+        try {
+            if (internetConnection(this.getApplication())){
+                val response = newsRepository.getHeadlines(countryCode, headlinePage)
+                headlines.postValue(handleHeadlinesResponse(response))
+            } else{
+                headlines.postValue(Resource.Error("No Internet"))
+            }
+        } catch (t : Throwable){
+            when(t){
+                is IOException -> headlines.postValue(Resource.Error("Unable to connect"))
+                else -> headlines.postValue(Resource.Error("No signal"))
+            }
+        }
+    }
+
+    private suspend fun searchNewsInternet(searchQuery : String){
+        newSearchQuery = searchQuery
+        searchNews.postValue(Resource.Loading())
+        try {
+            if (internetConnection(this.getApplication())){
+                val response = newsRepository.searchNews(searchQuery, searchNewsPage)
+                searchNews.postValue(handleSearchNewsResponse(response))
+            } else{
+                searchNews.postValue(Resource.Error("No Internet Connect"))
+            }
+        }catch (t : Throwable){
+            when(t){
+                is IOException -> headlines.postValue(Resource.Error("Unable to connect"))
+                else -> headlines.postValue(Resource.Error("No signal"))
+            }
+        }
     }
 }
